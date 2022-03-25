@@ -68,7 +68,7 @@ pacf(natgas_ts,  lag.max = 40, main = "NatGas")
 Using the $decompose()$ or $stl()$ and the $seasadj()$ functions create a series without the seasonal component, i.e., a deseasonalized natural gas series. Plot the deseasonalized series over time and corresponding ACF and PACF. Compare with the plots obtained in Q1.
 
 ```{r}
-decompose_natgas <- stl(natgas_ts, s.window = "period")
+decompose_natgas <- decompose(natgas_ts, "additive")
 deseasonal_natgas <- seasadj(decompose_natgas) 
 
 autoplot(deseasonal_natgas) +
@@ -82,7 +82,7 @@ acf(deseasonal_natgas, lag.max = 40, main = "DeSeason NatGas")
 pacf(deseasonal_natgas, lag.max = 40, main = "DeSeason NatGas")
 ```
 
-COMPARE PLOTS FROM ABOVE
+Looking at the plot of the deseasonalized series over time, we can see that compared to the original series, there is no longer a seasonal trend reflected in the plot. This is also seen in the ACF and PACF plots, as the ACF plot shows smooth decay (compared to the dips and peaks the previous ACF plot has) as lag increases, and the PACF plot cuts off immediately after the first lag, whereas with the previous PACF plot we saw additional spikes at various lags.
 
 
 ## Modeling the seasonally adjusted or deseasonalized series
@@ -100,7 +100,7 @@ print("Results for Mann Kendall test")
 print(summary(MannKendall(deseasonal_natgas)))
 ```
 
-For the ADF test, we calculated a p-value of $0.01<0.05$, therefore we reject the null hypothesis that the data has a unit root and conclude that the data follows a stochastic trend. For the Mann Kendall test, we calculated a p-value of $2.22e-16<0.05$, therefore we reject the null hypothesis and conclude that the data follows a deterministic trend.
+For the ADF test, we calculated a p-value of $0.01<0.05$, therefore we reject the null hypothesis and conclude that the data does not have a stochastic trend. For the Mann Kendall test, we calculated a p-value of $2.22e-16<0.05$, therefore we reject the null hypothesis and conclude that the data follows a deterministic trend.
 
 
 ### Q4
@@ -112,21 +112,38 @@ Using the plots from Q2 and test results from Q3 identify the ARIMA model parame
 n_diff <- ndiffs(deseasonal_natgas)
 cat("Number of differencing needed: ", n_diff)
 
-# we look at the differenced series to determine model order
 natgas_diff <- diff(deseasonal_natgas, differences = 1)
+
+# check Mann Kendall test after differencing
+print("Results for Mann Kendall test after differencing")
+print(summary(MannKendall(natgas_diff)))
+
+# we look at the differenced series to determine model order
 par(mfrow=c(1,2))
 Acf(natgas_diff, lag.max = 60, main = "Diff DeSeason NatGas")
 Pacf(natgas_diff, lag.max = 60, main = "Diff DeSeason NatGas")
 ```
 
-Lookng at plots from Q2: AR model since ACF plot exhibits slow decay and PACF plot shows sharp cutoff after lag 1 - indicates AR(1) model.
+Since our test results from Q3 identified the data as having a deterministic trend, it's necessary to difference teh series at least once. Using the `ndiffs` function, we've calculated that $d=1$. After differencing the deseasonalized series and plotting the ACF and PACF, it looks like both plots cut off after lag 1, so we can assume that $p=1$ and $q=1$.
+
+```{r}
+mod_111 <- Arima(deseasonal_natgas, order=c(1, 1, 1), include.drift=TRUE)
+mod_110 <- Arima(deseasonal_natgas, order=c(1, 1, 0), include.drift=TRUE)
+mod_011 <- Arima(deseasonal_natgas, order=c(0, 1, 1), include.drift=TRUE)
+
+compare_aic <- data.frame(mod_111$aic, mod_110$aic, mod_011$aic)
+print(compare_aic)
+```
+
+We can also fit a few different models and compare their AIC values - again, we see that the model with the lowest AIC is the one with $p=1$ and $q=1$, so we'll use this model.
+
 
 ### Q5
 
 Use $Arima()$ from package "forecast" to fit an ARIMA model to your series considering the order estimated in Q4. Should you allow for constants in the model, i.e., $include.mean = TRUE$ or $include.drift=TRUE$. **Print the coefficients** in your report. Hint: use the $cat()$ function to print.
 
 ```{r}
-ARIMA_deseason <- Arima(deseasonal_natgas, order = c(1, 1, 1), include.mean = FALSE)
+ARIMA_deseason <- Arima(deseasonal_natgas, order = c(1, 1, 1), include.drift = TRUE)
 print(ARIMA_deseason)
 ```
 
@@ -136,7 +153,13 @@ Now plot the residuals of the ARIMA fit from Q5 along with residuals ACF and PAC
 
 ```{r}
 checkresiduals(ARIMA_deseason)
+par(mfrow=c(1,3))
+ts.plot(ARIMA_deseason$residuals)
+Acf(ARIMA_deseason$residuals, lag.max = 40)
+Pacf(ARIMA_deseason$residuals, lag.max = 40)
 ```
+
+The residual series does not quite look like a white noise series, as we can see from the ACF plot that there are several spikes that fall outside the bounds. Additionally, we note that the Ljung-Box test resulted in a significant p-value, and therefore we reject the null hypothesis that the model is a good fit/the series isn't autocorrelated and conclude that the model shows lack of fit.
 
 
 ## Modeling the original series (with seasonality)
@@ -146,8 +169,39 @@ checkresiduals(ARIMA_deseason)
 Repeat Q4-Q6 for the original series (the complete series that has the seasonal component). Note that when you model the seasonal series, you need to specify the seasonal part of the ARIMA model as well, i.e., $P$, $D$ and $Q$.
 
 ```{r}
+# Find out how many time we need to difference
+n_diff <- ndiffs(natgas_ts)
+cat("Number of differencing needed: ", n_diff)
+ns_diff <- nsdiffs(natgas_ts)
+cat("Number of seasonal differencing needed: ", ns_diff)
 
+natgas_trend_diff <- diff(natgas_ts, lag = 1, differences = 1) #diff done on orig series
+natgas_both_diff <- diff(natgas_trend_diff, lag = 12, differences = 1)
+
+par(mfrow=c(1,2))
+Acf(natgas_both_diff, lag.max = 40, main = "Twice-Differenced NatGas", ylim=c(-1,1))
+Pacf(natgas_both_diff, lag.max = 40, main = "Twice-Differenced NatGas", ylim=c(-1,1))
 ```
+
+When we look at the first 12 lags for ACF & PACF we don’t see slow decays but it looks like we have
+cut offs at lag 2 on both plots, indicating an ARMA(p=2, q=2), and we know from ndiffs that $d=1$. 
+
+Looking at seasonal lags only (12, 24, 36), we can see that ACF has one spike at 12 and PACF has 2 spikes (one at 12 and one at 24). This is an indication of a seasonal moving average (SMA), and therefore the order of the seasonal component is $P=0$ and $Q=1$. We also know from the `nsdiffs` function that $D=1$.  
+
+
+```{r}
+# manually fitting seasonal ARIMA to the original series
+SARIMA_manual <- Arima(natgas_ts, order = c(2, 1, 2), seasonal = c(0, 1, 1), include.drift = FALSE)
+print(SARIMA_manual)
+
+checkresiduals(SARIMA_manual)
+par(mfrow=c(1,3))
+ts.plot(SARIMA_manual$residuals)
+Acf(SARIMA_manual$residuals, lag.max = 40)
+Pacf(SARIMA_manual$residuals, lag.max = 40)
+```
+
+The residual series does seem to look like a white noise series, as we can see from the ACF plot that the majority of ACF values fall within the bounds. Additionally, the Ljung-Box test resulted in a non-significant p-value, which indicates that the model is a good fit for the data.
 
 
 ### Q8
@@ -155,8 +209,18 @@ Repeat Q4-Q6 for the original series (the complete series that has the seasonal 
 Compare the residual series for Q7 and Q6. Can you tell which ARIMA model is better representing the Natural Gas Series? Is that a fair comparison? Explain your response.
 
 ```{r}
+par(mfrow=c(2,3))
+ts.plot(ARIMA_deseason$residuals)
+Acf(ARIMA_deseason$residuals, lag.max = 40)
+Pacf(ARIMA_deseason$residuals, lag.max = 40)
 
+#par(mfrow=c(1,3))
+ts.plot(SARIMA_manual$residuals)
+Acf(SARIMA_manual$residuals, lag.max = 40)
+Pacf(SARIMA_manual$residuals, lag.max = 40)
 ```
+
+The seasonal ARIMA model seems to be a better representation of the Natural Gas series according to the Ljung-Box test and the corresponding ACF and PACF plots. However, this might not be a fair comparison since the ARIMA model was fit on the deseasonalized series data, whereas the seasonal ARIMA model was fit on the original series data.
 
 
 ## Checking your model with the auto.arima()
@@ -168,8 +232,10 @@ Compare the residual series for Q7 and Q6. Can you tell which ARIMA model is bet
 Use the $auto.arima()$ command on the **deseasonalized series** to let R choose the model parameter for you. What's the order of the best ARIMA model? Does it match what you specified in Q4?
 
 ```{r}
-auto.arima(deseasonal_natgas)
+auto.arima(deseasonal_natgas, max.D = 0, max.P = 0, max.Q = 0)
 ```
+
+Yes, the model chosen with `auto.arima` matches what we specified in Q4.
 
 
 ### Q10
@@ -177,6 +243,8 @@ auto.arima(deseasonal_natgas)
 Use the $auto.arima()$ command on the **original series** to let R choose the model parameters for you. Does it match what you specified in Q7?
 
 ```{r}
-
+auto.arima(natgas_ts)
 ```
+
+No, the model chosen with `auto.arima` does not match what we specified in Q7.
 
